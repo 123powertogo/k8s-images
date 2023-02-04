@@ -1,0 +1,326 @@
+####################################CKS环境模拟####################################
+#按照提示在相应节点执行如下命令，即模拟了考试环境，直接做题即可。
+
+###第1题：Apparmor
+工作节点：
+apt-get install apparmor-utils apparmor-profiles apparmor-profiles-extra -y
+cat > /etc/apparmor.d/nginx_apparmor  << EOF
+#include <tunables/global>
+profile nginx-profile   flags=(attach_disconnected) {
+#include <abstractions/base>
+file,
+# Deny all file writes. deny /** w,
+}
+EOF
+
+主节点：
+mkdir -p /cks/1
+cat > /cks/1/pod1.yaml  << EOF
+apiVersion: v1
+kind: Pod 
+metadata:
+  name: hello-apparmor 
+spec:
+  containers:
+  - name: hello 
+    image: busybox
+    command: [ "sh", "-c", "echo 'Hello AppArmor!' && sleep 1h" ]
+EOF
+
+###第2题：kube-bench
+
+###第3题：trivy
+#第一次执行不能用skip-update，第一次必须下载数据库，第二次执行可以使用skip-update参数
+#如果检查无输出，可将kube-proxy的镜像检测下，能验证该命令执行的效果。
+主节点：
+rm -rf /var/lib/dpkg/lock*
+rm -rf /var/cache/apt/archives/lock*
+#上传压缩包
+dpkg -i trivy_0.35.0_Linux-64bit.deb
+
+
+###第4题： sysdig
+#如果sysdig没输出，可以用kube-proxy的容器id验证命令的效果，常用的nginx等镜像，我执行sysdig命令输出为空。
+工作节点：
+mkdir -p /opt/2
+curl -s https://s3.amazonaws.com/download.draios.com/DRAIOS-GPG-KEY.public | apt-key add -
+curl -s -o /etc/apt/sources.list.d/draios.list http://download.draios.com/stable/deb/draios.list
+apt-get update
+rm -rf /var/lib/dpkg/lock*
+rm -rf /var/cache/apt/archives/lock*
+sleep 5
+apt-get -y install sysdig
+
+###第5题： serviceaccount
+主节点：
+kubectl create ns qa
+mkdir -p /cks/9/
+cat >  /cks/9/pod9.yaml << EOF
+apiVersion: v1
+kind: Pod 
+metadata: 
+  labels:
+    run: backend
+  name: backend 
+  namespace: qa
+spec:
+  containers:
+  - image: nginx:1.9
+    name: backend
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+EOF
+
+
+###第6题：TLS通信
+###第7题：网络策略
+主节点：
+kubectl create ns development
+mkdir -p /cks/15/
+touch /cks/15/p1.yaml
+
+###第8题：网络策略
+主节点：
+kubectl create ns testing
+kubectl create ns development
+kubectl label ns testing name=testing
+
+cat > /root/products-service.yaml  << EOF
+apiVersion: v1
+kind: Pod 
+metadata:
+  name: products-service
+  namespace: development
+  labels:
+    run: products-service
+spec:
+  containers:
+  - name: products-service
+    image: nginx
+EOF
+
+kubectl apply -f products-service.yaml
+
+#该容器用于验证网络策略是否生效，进入该容器用ping验证。
+cat > /root/products-service-test.yaml  << EOF
+apiVersion: v1
+kind: Pod 
+metadata:
+  name: products-service-test
+  namespace: testing
+spec:
+  containers:
+  - name: products-service-test
+    image: busybox
+    command: [ "sh", "-c", "echo 'Hello AppArmor!' && sleep 1h" ]
+EOF
+
+kubectl apply -f products-service-test.yaml
+
+mkdir -p /cks/6
+touch /cks/6/p2.yaml
+
+###第9题：RBAC
+#需get已经存在的role，验证规则是否和题中的一致。
+主节点：
+kubectl create ns monitoring
+
+cat > role-1.yaml  << EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: role-1
+  namespace: monitoring
+rules:
+- apiGroups: [""] 
+  resources: ["enpoints"]
+  verbs: ["get"]
+EOF
+
+kubectl apply -f role-1.yaml
+kubectl create serviceaccount test-sa-3 -n monitoring
+kubectl create rolebinding bd-role-01 -n monitoring --role=role-1 --serviceaccount=monitoring:test-sa-3 
+
+#可忽略
+##################rbac-新题不执行######################
+ cat > web-pod.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: web-pod
+  name: web-pod
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-pod
+  template:
+    metadata:
+      labels:
+        app: web-pod
+    spec:
+      serviceAccount: sa-1
+      containers:
+      - image: nginx
+        name: nginx
+EOF
+
+kubectl apply -f web-pod.yaml
+#######################################################
+
+###第10题：kube-apiserver 审计日志记录和采集
+主节点：
+mkdir -p /etc/kubernetes/logpolicy
+
+cat > /etc/kubernetes/logpolicy/sample-policy.yaml << EOF
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - "RequestReceived"
+rules:
+  - level: RequestResponse 
+    resources:
+    - group: ""
+      resources: ["namespaces"]
+  - level: Request
+    resources:
+    - group: ""
+      resources: ["pods"]
+    namespaces: ["front-apps"]
+  - level: Metadata 
+    resources:
+    - group: ""
+      resources: ["secrets", "configmaps"]
+  - level: Metadata
+    omitStages:
+      - "RequestReceived"
+EOF
+
+###第11题：secret
+
+主节点：
+mkdir -p /cks/11
+kubectl create ns istio-system
+kubectl create secret generic db1-secret-test --from-literal=username=xiaoqing --from-literal=password=123123 -n istio-system
+kubectl describe secret db1-secret-test -n istio-system
+
+
+###第12题：Dockerfile优化
+主节点：
+mkdir -p /cks/7/
+
+cat > /cks/7/Dockerfile << EOF
+FROM ubuntu:16.04
+USER root
+EOF
+
+cat > /cks/7/deployment.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test
+  labels:
+    app: dev 
+    name: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dev
+  template:
+    metadata:
+      labels:
+        app: dev 
+    spec:
+      containers:
+      - image: nginx:1.9
+        name: mysql
+        securityContext: 
+          privileged: true
+          readOnlyRootFilesystem: false
+          runAsUser: 65500
+EOF
+
+###第13题：imagepolicywebhook
+#此题重点：记得挂载/etc/kubernetes/config目录
+主节点：
+mkdir -p /etc/kubernetes/config
+
+#如下两个文件只是模拟用的，yaml格式不对不用管，这个题无法验证的，只要将操作熟悉即可。
+cat > /etc/kubernetes/config/admission_configuration.json << EOF
+{
+"imagePolicy": {
+**"kubeConfigFile": "/etc/kubernetes/aa/kubeconfig.yaml", 
+"allowTTL": 50,
+"denyTTL": 50,
+"retryBackoff": 500,
+**"defaultAllow": true 
+}
+}
+EOF
+
+cat > /etc/kubernetes/config/kubeconfig.yaml << EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+certificate-authority: /etc/kubernetes/aa/webhook.pem
+**server: https://192.168.1.108:1323/image_policy #添加webhook server地址** 没有环境，这题无法验证结果。
+name: bouncer_webhook
+contexts:
+- context:
+cluster: bouncer_webhook
+user: api-server
+name: bouncer_validator
+current-context: bouncer_validator
+preferences: {
+}
+users:
+- name: api-server
+user:
+client-certificate: /etc/kubernetes/aa/apiserver-client.pem
+client-key: /etc/kubernetes/aa/apiserver-clientkey.pem
+EOF
+
+###第14题：deployment安全上下文
+主节点：
+kubectl create ns sec-ns
+kubectl create deployment secdep --image=nginx -n sec-ns
+
+###第15题：Gvsior
+主节点：
+kubectl create ns client
+
+cat > pod1.yaml << EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod1
+  namespace: client
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+EOF
+
+kubectl apply -f pod1.yaml
+ 
+cat > pod2.yaml << EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod2
+  namespace: client
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+EOF
+
+kubectl apply -f pod2.yaml
+ 
+###第16题：apiserver安全机制
+ 
